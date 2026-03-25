@@ -1,0 +1,41 @@
+typing:
+  base_wpm: 65
+  wpm_std: 12
+  error_rate: 0.02
+  fatigue_decay_per_char: 0.0005
+  fatigue_min_speed_ratio: 0.4
+
+klm:
+  K: 0.28   # keystroke seconds
+  M: 1.35   # mental operator seconds
+  H: 0.40   # hand movement seconds
+  P: 1.10   # pointing seconds
+
+pause:
+  micro_min: 2
+  micro_max: 15
+  short_min: 15
+  short_max: 180
+  mid_min: 180
+  mid_max: 600
+  long_min: 600
+
+nonlinear:
+  backvisit_probability: 0.15
+
+gan:
+  noise_dim: 64
+  context_dim: 32
+  hidden_size: 128
+  num_layers: 3
+  seq_len: 32
+
+hmm:
+  n_states: 6
+  n_iter: 100
+
+llm:
+  provider: claude   # claude | openai
+  model: claude-opus-4-6
+  max_tokens: 4096
+  temperature: 0.7
