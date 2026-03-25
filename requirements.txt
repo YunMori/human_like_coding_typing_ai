@@ -1,0 +1,24 @@
+# Core
+tree-sitter>=0.21.0
+tree-sitter-languages>=1.10.2
+hmmlearn>=0.3.0
+torch>=2.2.0
+numpy>=1.26.0
+scipy>=1.13.0
+pyyaml>=6.0.1
+python-dotenv>=1.0.1
+tqdm>=4.66.0
+click>=8.1.7
+rich>=13.7.0
+loguru>=0.7.2
+pytest>=8.2.0
+pytest-asyncio>=0.23.0
+
+# Optional: DesktopInjector 테스트 시에만 필요
+# pyautogui>=0.9.54
+
+# Optional: 키스트로크 데이터 수집 스크립트 전용
+# pynput>=1.7.6
+
+# Optional: WebInjector 전용
+# playwright>=1.44.0
