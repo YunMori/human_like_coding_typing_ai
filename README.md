@@ -159,23 +159,106 @@ echo '{"code": "def hello():\n    print(\"world\")", "language": "python"}' \
 
 ---
 
-## Training (Optional)
+## Training
 
-Pre-trained weights are not included. To train on your own typing data:
+Pre-trained weights are not included. Training on real human keystroke data is the key step that makes the timing output convincingly human. Without trained models the system falls back to synthetic lognormal distributions, which are noticeably less realistic.
+
+### Step 1 — Prepare training data
+
+**Option A: Use the 2019 CS1 Keystroke Dataset** (recommended)
+
+Download the [2019 CS1 Keystroke Dataset](https://dl.acm.org/doi/10.1145/3287324.3287450) (Utah State University, ~486 students, 5M+ events) and convert it to the JSONL training format:
 
 ```bash
-# 1. Collect real keystroke data (records to data/raw/)
-python scripts/collect_keystroke_data.py
+python scripts/convert_cs1_dataset.py \
+  /path/to/keystrokes.csv \
+  --output data/raw/keystroke_samples.jsonl
+```
 
-# 2. Train the GAN timing model
-python main.py train-gan
+This extracts inter-keystroke intervals, splits sessions at pauses > 5s, and produces 32-keystroke sequences. The resulting dataset (~91K sequences from 486 subjects) has the following timing distribution:
 
-# 3. Train the HMM model
-python main.py train-hmm
+| Percentile | Delay (ms) |
+|-----------|------------|
+| p25       | 112        |
+| p50       | 171        |
+| p75       | 363        |
+| p95       | 1,701      |
 
-# 4. Evaluate model quality
+**Option B: Record your own typing**
+
+```bash
+pip install pynput
+python scripts/collect_keystroke_data.py --duration 300   # 5 min session
+```
+
+---
+
+### Step 2 — Train GAN + HMM simultaneously
+
+```bash
+# Train both in parallel
+PYTHONPATH=. python3 scripts/train_gan.py --epochs 50 &
+PYTHONPATH=. python3 scripts/train_hmm.py &
+wait
+```
+
+Or using the CLI:
+```bash
+python main.py train-gan   # saves models/gan_generator.pth + gan_discriminator.pth
+python main.py train-hmm   # saves models/hmm_model.pkl
+```
+
+**GAN training details:**
+
+The GAN uses a bidirectional LSTM Generator + spectral-norm LSTM Discriminator trained with **Hinge loss** (not WGAN-GP, which requires second-order gradients unsupported on Apple MPS). This choice enables native Apple Silicon acceleration via PyTorch MPS.
+
+| Component | Architecture |
+|-----------|-------------|
+| Generator | LSTM (3 layers, hidden=128) + linear projection → (seq_len, 3) |
+| Discriminator | Bidirectional LSTM + spectral norm + hinge loss |
+| Optimizer | Adam (lr=1e-4, β=(0.0, 0.9)) |
+| D:G update ratio | 2:1 |
+| Input | noise (dim=64) + context vector (dim=32) |
+| Output | (keydown_ms, keyhold_ms, gap_ms) × seq_len |
+
+The context vector encodes complexity, fatigue level, and HMM state, allowing the generator to condition timing on typing context.
+
+**Hardware acceleration:**
+
+```
+Apple Silicon (MPS) → automatically selected
+CUDA GPU            → automatically selected if MPS unavailable
+CPU                 → fallback
+```
+
+Training 50 epochs on 91K sequences takes approximately:
+- Apple M-series (MPS): ~1.2 hours
+- CPU only: ~8–10 hours
+
+**HMM training details:**
+
+A 6-state `GaussianHMM` (via hmmlearn) is fit on the inter-keystroke delay sequences. The 6 states capture distinct behavioral modes observed in real typing:
+
+| State | Behavior |
+|-------|----------|
+| NORMAL | Steady comfortable typing |
+| SLOW | Thinking before a complex expression |
+| FAST | Muscle-memory bursts (common bigrams) |
+| ERROR | Pre-error state — slightly irregular |
+| CORRECTION | Backspace + retype sequence |
+| PAUSE | Deliberate stop (end of block, reading) |
+
+At inference time, the HMM generates a state sequence for each segment, and the GAN samples timing conditioned on those states.
+
+---
+
+### Step 3 — Evaluate
+
+```bash
 python scripts/benchmark.py
 ```
+
+Runs a Kolmogorov-Smirnov test comparing generated timing distributions against held-out real sequences. A KS statistic < 0.1 indicates the generated timing is statistically similar to human typing.
 
 ---
 
