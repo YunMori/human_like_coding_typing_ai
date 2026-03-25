@@ -10,30 +10,23 @@ from layer3_dynamics.gan.discriminator import TimingDiscriminator
 from layer3_dynamics.gan.dataset import KeystrokeDataset
 
 
-def compute_gradient_penalty(D, real, fake, device):
-    alpha = torch.rand(real.size(0), 1, 1, device=device)
-    interpolated = (alpha * real + (1 - alpha) * fake).requires_grad_(True)
-    d_interp = D(interpolated)
-    grads = torch.autograd.grad(
-        outputs=d_interp,
-        inputs=interpolated,
-        grad_outputs=torch.ones_like(d_interp),
-        create_graph=True,
-        retain_graph=True,
-    )[0]
-    gp = ((grads.norm(2, dim=(1, 2)) - 1) ** 2).mean()
-    return gp
+def _best_device() -> str:
+    if torch.backends.mps.is_available():
+        return "mps"
+    if torch.cuda.is_available():
+        return "cuda"
+    return "cpu"
 
 
 class GANTrainer:
-    def __init__(self, config: dict, device: str = "cpu"):
+    def __init__(self, config: dict, device: str = "auto"):
         self.config = config
-        self.device = torch.device(device)
+        self.device = torch.device(_best_device() if device == "auto" else device)
+        logger.info(f"GAN trainer using device: {self.device}")
         self.noise_dim = config.get("noise_dim", 64)
         self.context_dim = config.get("context_dim", 32)
         self.seq_len = config.get("seq_len", 32)
-        self.lambda_gp = 10.0
-        self.d_steps = 5  # D:G = 5:1
+        self.d_steps = 2  # spectral norm handles lipschitz, no gradient penalty needed
 
         self.G = TimingGenerator(
             noise_dim=self.noise_dim,
@@ -62,16 +55,15 @@ class GANTrainer:
                 real = real_batch.to(self.device)  # (B, seq_len, 3)
                 B = real.size(0)
 
-                # Train Discriminator
+                # Train Discriminator with hinge loss (spectral norm provides lipschitz)
                 for _ in range(self.d_steps):
                     noise = torch.randn(B, self.noise_dim, device=self.device)
                     ctx = torch.randn(B, self.context_dim, device=self.device)
                     fake = self.G(noise, ctx).detach()
 
-                    d_real = self.D(real).mean()
-                    d_fake = self.D(fake).mean()
-                    gp = compute_gradient_penalty(self.D, real, fake, self.device)
-                    d_loss = d_fake - d_real + self.lambda_gp * gp
+                    d_real = self.D(real)
+                    d_fake = self.D(fake)
+                    d_loss = torch.relu(1.0 - d_real).mean() + torch.relu(1.0 + d_fake).mean()
 
                     self.opt_D.zero_grad()
                     d_loss.backward()
