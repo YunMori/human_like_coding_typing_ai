@@ -32,6 +32,8 @@ class TimingSynthesizer:
         self.fatigue.reset()
         events: List[KeystrokeEvent] = []
         all_text = plan.total_text
+        total_chars = max(len(all_text), 1)
+        global_char_idx = 0
         char_count = 0
 
         for seg in plan.segments:
@@ -58,15 +60,6 @@ class TimingSynthesizer:
             # Build HMM state sequence for this segment
             hmm_states = self.hmm.generate_state_sequence(len(text), initial_state=0)
 
-            # GAN context
-            ctx_vec = self.gan.build_context_vector(
-                complexity=seg.complexity.value,
-                fatigue=self.fatigue.get_speed_multiplier(),
-                hmm_state=hmm_states[0] if hmm_states else 0,
-            )
-            # Sample GAN timings (we cycle through them)
-            gan_timings = self.gan.sample_timings(ctx_vec, n_samples=1)[0]  # (seq_len, 3)
-
             prev_char = " "
             pending_error: Optional[tuple] = None  # (error_char, intended_char, extra_typed)
             extra_after_error = 0
@@ -74,12 +67,26 @@ class TimingSynthesizer:
             for i, ch in enumerate(text):
                 state = hmm_states[i] if i < len(hmm_states) else 0
 
+                # source_location: normalized position of this char in the full code (0-1)
+                source_loc = (global_char_idx + i) / total_chars
+
+                # Per-character GAN context (includes position + current char)
+                ctx_vec = self.gan.build_context_vector(
+                    complexity=seg.complexity.value,
+                    fatigue=self.fatigue.get_speed_multiplier(),
+                    hmm_state=state,
+                    prev_key=prev_char,
+                    is_bigram=self.bigram.get_speedup(prev_char, ch) < 1.0,
+                    source_location=source_loc,
+                    curr_char=ch,
+                )
+
                 # Get base timing
                 if self.gan.trained:
-                    gan_idx = i % len(gan_timings)
-                    key_down_ms = float(gan_timings[gan_idx, 0])
-                    key_hold_ms = float(gan_timings[gan_idx, 1])
-                    gap_ms = float(gan_timings[gan_idx, 2])
+                    gan_timings = self.gan.sample_timings(ctx_vec, n_samples=1)[0]  # (seq_len, 3)
+                    key_down_ms = float(gan_timings[0, 0])
+                    key_hold_ms = float(gan_timings[0, 1])
+                    gap_ms = float(gan_timings[0, 2])
                     delay_ms = key_down_ms + gap_ms
                 else:
                     delay_ms = self.hmm.sample_delay_ms(state)
@@ -133,6 +140,8 @@ class TimingSynthesizer:
                     hmm_state=state,
                 ))
                 prev_char = ch
+
+            global_char_idx += len(text)
 
         logger.info(f"Synthesized {len(events)} keystroke events")
         return events

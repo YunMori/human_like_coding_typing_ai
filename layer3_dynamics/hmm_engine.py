@@ -71,3 +71,28 @@ class HMMEngine:
         base_hold = {0: 60, 1: 90, 2: 40, 3: 70, 4: 65, 5: 55}
         mean = base_hold.get(state, 60)
         return max(20.0, float(np.random.normal(mean, mean * 0.2)))
+
+    def decode_sequence(self, delays_ms: np.ndarray) -> List[int]:
+        """Viterbi decoding: IKI array (ms) → state index sequence.
+        Uses trained HMM model if loaded, otherwise falls back to heuristic.
+        """
+        if self.model is None:
+            return [self._heuristic_state(float(d)) for d in delays_ms]
+        obs = np.array(delays_ms, dtype=np.float32).reshape(-1, 1)
+        states = self.model.predict(obs)
+        return states.tolist()
+
+    @staticmethod
+    def _heuristic_state(delay_ms: float) -> int:
+        """Threshold-based fallback (used only when HMM model not loaded)."""
+        if delay_ms >= 1000:
+            return 5
+        if delay_ms >= 350:
+            return 1
+        if delay_ms >= 220:
+            return 3
+        if delay_ms >= 80:
+            return 0
+        if delay_ms >= 45:
+            return 4
+        return 2
