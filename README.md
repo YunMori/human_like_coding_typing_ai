@@ -40,6 +40,28 @@ KeystrokeEvent[] + Stats JSON
 
 ---
 
+## Tech Stack
+
+| Category | Library / Tool | Version | Role |
+|----------|---------------|---------|------|
+| **Language** | Python | 3.10+ | — |
+| **ML Framework** | PyTorch | ≥ 2.2 | GAN 훈련 및 추론 (MPS / CUDA / CPU) |
+| **Sequence Model** | hmmlearn | ≥ 0.3 | 타이핑 행동 상태 모델 (6-state HMM) |
+| **Statistics** | scipy | ≥ 1.13 | KS test — 생성 분포 vs 실측 분포 검증 |
+| **Numerical** | numpy | ≥ 1.26 | 수치 연산 |
+| **Code Parsing** | tree-sitter + tree-sitter-languages | ≥ 0.21 | 다중 언어 AST 파싱 (복잡도 분류) |
+| **LLM** | Claude API (claude-opus-4-6) | — | 코드 생성 백엔드 |
+| **CLI** | click | ≥ 8.1 | 커맨드라인 인터페이스 |
+| **Logging** | loguru | ≥ 0.7 | 구조화 로그 |
+| **Terminal UI** | rich | ≥ 13.7 | 진행 상황 표시 |
+| **Config** | pyyaml | ≥ 6.0 | `config.yaml` 파싱 |
+| **Testing** | pytest + pytest-asyncio | ≥ 8.2 | 유닛 / 비동기 테스트 |
+| **Desktop Injection** | pyautogui *(optional)* | ≥ 0.9 | 데스크탑 앱 키입력 주입 |
+| **Web Injection** | playwright *(optional)* | ≥ 1.44 | 브라우저 키입력 주입 |
+| **Data Collection** | pynput *(optional)* | ≥ 1.7 | 실제 키스트로크 데이터 수집 |
+
+---
+
 ## Features
 
 - **Multi-language support** — Python, JavaScript, TypeScript, Java, Go, Rust (via Tree-sitter)
