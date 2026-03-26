@@ -3,16 +3,20 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 from pathlib import Path
-from typing import Optional
 from loguru import logger
 
 
 class KeystrokeDataset(Dataset):
-    """JSONL dataset where each line is a keystroke sequence."""
+    """JSONL dataset where each line is a keystroke sequence.
+
+    Each record may include:
+        timings:   [[delay_ms, hold_ms, gap_ms], ...]  32 steps
+        context:   [[ctx_dim, ...], ...]               32 × 32 pre-computed context vectors
+    """
 
     def __init__(self, jsonl_path: str, seq_len: int = 32):
         self.seq_len = seq_len
-        self.sequences = []
+        self.sequences = []   # list of {"timings": np, "context": np}
         path = Path(jsonl_path)
         if path.exists():
             self._load(path)
@@ -26,25 +30,37 @@ class KeystrokeDataset(Dataset):
                 try:
                     record = json.loads(line.strip())
                     timings = record.get("timings", [])
-                    if len(timings) >= self.seq_len:
-                        seq = np.array(timings[:self.seq_len], dtype=np.float32)
-                        # Normalize
-                        seq = np.clip(seq / 1000.0, 0, 5)  # convert ms to seconds, clip at 5s
-                        self.sequences.append(seq)
+                    if len(timings) < self.seq_len:
+                        continue
+
+                    timing_arr = np.array(timings[:self.seq_len], dtype=np.float32)
+                    timing_arr = np.clip(timing_arr / 1000.0, 0, 5)  # ms → s, clip @ 5s
+
+                    # Load pre-computed context if present, else zero
+                    context = record.get("context", None)
+                    if context and len(context) >= self.seq_len:
+                        ctx_arr = np.array(context[:self.seq_len], dtype=np.float32)
+                    else:
+                        ctx_arr = np.zeros((self.seq_len, 32), dtype=np.float32)
+
+                    self.sequences.append({"timings": timing_arr, "context": ctx_arr})
                 except Exception:
                     continue
         logger.info(f"Loaded {len(self.sequences)} keystroke sequences")
 
     def _generate_synthetic(self, n: int):
-        """Generate synthetic human-like timing data for bootstrapping."""
         for _ in range(n):
-            # Simulate inter-key intervals: mostly 80-200ms with occasional pauses
-            seq = np.random.lognormal(np.log(0.12), 0.4, (self.seq_len, 3)).astype(np.float32)
-            seq = np.clip(seq, 0.02, 5.0)
-            self.sequences.append(seq)
+            timing_arr = np.random.lognormal(np.log(0.12), 0.4, (self.seq_len, 3)).astype(np.float32)
+            timing_arr = np.clip(timing_arr, 0.02, 5.0)
+            ctx_arr = np.zeros((self.seq_len, 32), dtype=np.float32)
+            self.sequences.append({"timings": timing_arr, "context": ctx_arr})
 
     def __len__(self):
         return len(self.sequences)
 
     def __getitem__(self, idx):
-        return torch.FloatTensor(self.sequences[idx])
+        record = self.sequences[idx]
+        return {
+            "timings": torch.FloatTensor(record["timings"]),   # (seq_len, 3)
+            "context": torch.FloatTensor(record["context"]),   # (seq_len, 32)
+        }

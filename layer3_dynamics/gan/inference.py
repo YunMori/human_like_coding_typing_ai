@@ -48,16 +48,40 @@ class GANInference:
 
     def build_context_vector(self, complexity: int, fatigue: float,
                               hmm_state: int, prev_key: str = " ",
-                              is_bigram: bool = False) -> np.ndarray:
-        """Build 32-dim context vector."""
+                              is_bigram: bool = False,
+                              source_location: float = 0.0,
+                              curr_char: str = " ") -> np.ndarray:
+        """Build 32-dim context vector.
+
+        Layout (unified with scripts/convert_cs1_dataset.py _build_context):
+            [0]    source_location (0-1)
+            [1]    char_type (0=alpha, 0.5=digit, 1=special)
+            [2]    curr_char ASCII / 128
+            [3]    is_delete
+            [4]    complexity (0-1)
+            [5]    fatigue (0-1)
+            [6:12] HMM state one-hot (6 states)
+            [12]   prev_key ASCII / 128
+            [13]   is_bigram
+            [14-31] reserved (0)
+        """
         ctx = np.zeros(self.context_dim, dtype=np.float32)
-        ctx[0] = complexity / 4.0        # normalized complexity
-        ctx[1] = fatigue                  # fatigue ratio
-        # HMM state one-hot (6 dims, indices 2-7)
+        ctx[0] = float(np.clip(source_location, 0.0, 1.0))
+        if curr_char:
+            c = curr_char[0]
+            if c.isalpha():
+                ctx[1] = 0.0
+            elif c.isdigit():
+                ctx[1] = 0.5
+            else:
+                ctx[1] = 1.0
+            ctx[2] = ord(c) / 128.0
+            ctx[3] = 1.0 if curr_char in ("\x08", "backspace", "BackSpace") else 0.0
+        ctx[4] = complexity / 4.0
+        ctx[5] = fatigue
         if 0 <= hmm_state < 6:
-            ctx[2 + hmm_state] = 1.0
-        # prev_key embedding (23 dims, indices 8-30): simple char code normalized
+            ctx[6 + hmm_state] = 1.0
         if prev_key:
-            ctx[8] = ord(prev_key[0]) / 128.0
-        ctx[31] = float(is_bigram)
+            ctx[12] = ord(prev_key[0]) / 128.0
+        ctx[13] = float(is_bigram)
         return ctx
