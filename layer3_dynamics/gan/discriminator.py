@@ -12,7 +12,7 @@ class TimingDiscriminator(nn.Module):
     """
 
     def __init__(self, input_dim: int = 3, context_dim: int = 32,
-                 hidden_size: int = 128, num_layers: int = 2):
+                 hidden_size: int = 256, num_layers: int = 2):
         super().__init__()
         self.ctx_proj = spectral_norm(nn.Linear(context_dim, hidden_size))
         self.lstm = nn.LSTM(
