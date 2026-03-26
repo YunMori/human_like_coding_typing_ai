@@ -5,6 +5,8 @@ from torch.utils.data import DataLoader, random_split
 from tqdm import tqdm
 from loguru import logger
 
+from contextlib import nullcontext
+
 try:
     from scipy import stats as scipy_stats
     SCIPY_AVAILABLE = True
@@ -35,7 +37,7 @@ def _compute_ks(G, noise_dim: int, device: torch.device,
     context_dim = 32
 
     G.eval()
-    gen_delays = []
+    parts = []
     with torch.no_grad():
         for hmm_state, weight in enumerate(HMM_STATE_WEIGHTS):
             n = max(1, int(n_samples * weight))
@@ -43,13 +45,13 @@ def _compute_ks(G, noise_dim: int, device: torch.device,
             ctx[4] = 0.604  # complexity (actual dataset mean)
             ctx[5] = 0.523  # fatigue (actual dataset mean)
             ctx[6 + hmm_state] = 1.0
-            ctx_t = torch.FloatTensor(ctx).unsqueeze(0).expand(n, -1).to(device)
+            ctx_t = torch.as_tensor(ctx, dtype=torch.float32).unsqueeze(0).expand(n, -1).to(device)
             noise = torch.randn(n, noise_dim, device=device)
-            timings = G(noise, ctx_t).cpu().numpy() * 1000.0
-            gen_delays.extend(timings[:, :, 0].flatten().tolist())
+            timings_np = G(noise, ctx_t).cpu().numpy() * 1000.0
+            parts.append(timings_np[:, :, 0].flatten())
     G.train()
 
-    gen_arr = np.array(gen_delays)
+    gen_arr = np.concatenate(parts)
     rng = np.random.default_rng(42)
     real_sub = rng.choice(real_delays, size=min(len(gen_arr), len(real_delays)), replace=False)
     ks_stat, _ = scipy_stats.ks_2samp(real_sub, gen_arr)
@@ -82,6 +84,8 @@ class GANTrainer:
 
         self.opt_G = optim.Adam(self.G.parameters(), lr=1e-4, betas=(0.0, 0.9))
         self.opt_D = optim.Adam(self.D.parameters(), lr=1e-4, betas=(0.0, 0.9))
+        self._use_amp = (self.device.type == "cuda")
+        self._scaler = torch.amp.GradScaler("cuda") if self._use_amp else None
 
     def train(self, dataset_path: str, epochs: int = 1000, batch_size: int = 64,
               eval_every: int = 50, target_ks: float = 0.10, patience: int = 5,
@@ -96,7 +100,13 @@ class GANTrainer:
             full_dataset, [train_size, val_size],
             generator=torch.Generator().manual_seed(42),
         )
-        loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, drop_last=True)
+        _is_cuda = self.device.type == "cuda"
+        loader = DataLoader(
+            train_dataset, batch_size=batch_size, shuffle=True, drop_last=True,
+            num_workers=4 if _is_cuda else 0,
+            pin_memory=_is_cuda,
+            persistent_workers=_is_cuda,
+        )
         logger.info(f"Train: {train_size:,} / Val: {val_size:,} sequences (90/10 split, seed=42)")
 
         # 검증 데이터에서 실제 delay 추출 (학습 데이터와 완전 분리)
@@ -122,27 +132,39 @@ class GANTrainer:
                 ctx = ctx_seq[:, 0, :]  # (B, 32)
 
                 # Train Discriminator (conditional, hinge loss)
+                noise_d = torch.randn(B, self.noise_dim, device=self.device)
+                fake_d = self.G(noise_d, ctx).detach()
+
                 for _ in range(self.d_steps):
-                    noise = torch.randn(B, self.noise_dim, device=self.device)
-                    fake = self.G(noise, ctx).detach()
-
-                    d_real = self.D(real, ctx)
-                    d_fake = self.D(fake, ctx)
-                    d_loss = torch.relu(1.0 - d_real).mean() + torch.relu(1.0 + d_fake).mean()
-
-                    self.opt_D.zero_grad()
-                    d_loss.backward()
-                    self.opt_D.step()
+                    _amp_ctx = torch.autocast("cuda", dtype=torch.float16) if self._use_amp else nullcontext()
+                    with _amp_ctx:
+                        d_real = self.D(real, ctx)
+                        d_fake = self.D(fake_d, ctx)
+                        d_loss = torch.relu(1.0 - d_real).mean() + torch.relu(1.0 + d_fake).mean()
+                    self.opt_D.zero_grad(set_to_none=True)
+                    if self._use_amp:
+                        self._scaler.scale(d_loss).backward()
+                        self._scaler.step(self.opt_D)
+                        self._scaler.update()
+                    else:
+                        d_loss.backward()
+                        self.opt_D.step()
                     d_losses.append(d_loss.item())
 
                 # Train Generator (conditional)
-                noise = torch.randn(B, self.noise_dim, device=self.device)
-                fake = self.G(noise, ctx)
-                g_loss = -self.D(fake, ctx).mean()
-
-                self.opt_G.zero_grad()
-                g_loss.backward()
-                self.opt_G.step()
+                noise_g = torch.randn(B, self.noise_dim, device=self.device)
+                _amp_ctx = torch.autocast("cuda", dtype=torch.float16) if self._use_amp else nullcontext()
+                with _amp_ctx:
+                    fake_g = self.G(noise_g, ctx)
+                    g_loss = -self.D(fake_g, ctx).mean()
+                self.opt_G.zero_grad(set_to_none=True)
+                if self._use_amp:
+                    self._scaler.scale(g_loss).backward()
+                    self._scaler.step(self.opt_G)
+                    self._scaler.update()
+                else:
+                    g_loss.backward()
+                    self.opt_G.step()
                 g_losses.append(g_loss.item())
 
                 pbar.set_postfix(G=f"{g_loss.item():.3f}", D=f"{d_loss.item():.3f}")
