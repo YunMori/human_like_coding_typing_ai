@@ -10,22 +10,28 @@ from layer3_dynamics.gan.generator import TimingGenerator
 class GANInference:
     def __init__(self, model_path: Optional[str] = None, config: dict = None):
         config = config or {}
-        self.noise_dim = config.get("noise_dim", 64)
+        self.noise_dim = config.get("noise_dim", 16)
         self.context_dim = config.get("context_dim", 32)
         self.seq_len = config.get("seq_len", 32)
-        self.device = torch.device("cpu")
+        if torch.backends.mps.is_available():
+            self.device = torch.device("mps")
+        elif torch.cuda.is_available():
+            self.device = torch.device("cuda")
+        else:
+            self.device = torch.device("cpu")
 
         self.G = TimingGenerator(
             noise_dim=self.noise_dim,
             context_dim=self.context_dim,
-            hidden_size=config.get("hidden_size", 128),
+            hidden_size=config.get("hidden_size", 256),
             num_layers=config.get("num_layers", 3),
             seq_len=self.seq_len,
         )
+        self.G.to(self.device)
 
         self.trained = False
         if model_path and Path(model_path).exists():
-            self.G.load_state_dict(torch.load(model_path, map_location="cpu"))
+            self.G.load_state_dict(torch.load(model_path, map_location=self.device))
             self.trained = True
             logger.info(f"Loaded GAN generator from {model_path}")
         else:
@@ -39,11 +45,11 @@ class GANInference:
         Values are in milliseconds.
         """
         with torch.no_grad():
-            noise = torch.randn(n_samples, self.noise_dim)
-            ctx = torch.FloatTensor(context_vector).unsqueeze(0).expand(n_samples, -1)
+            noise = torch.randn(n_samples, self.noise_dim, device=self.device)
+            ctx = torch.as_tensor(context_vector, dtype=torch.float32).unsqueeze(0).expand(n_samples, -1).to(self.device)
             timings = self.G(noise, ctx)  # (n, seq_len, 3)
             # Convert from normalized seconds back to ms
-            timings_ms = timings.numpy() * 1000.0
+            timings_ms = timings.cpu().numpy() * 1000.0
         return timings_ms
 
     def build_context_vector(self, complexity: int, fatigue: float,

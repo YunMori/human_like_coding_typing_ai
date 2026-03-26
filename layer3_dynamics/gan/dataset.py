@@ -61,6 +61,6 @@ class KeystrokeDataset(Dataset):
     def __getitem__(self, idx):
         record = self.sequences[idx]
         return {
-            "timings": torch.FloatTensor(record["timings"]),   # (seq_len, 3)
-            "context": torch.FloatTensor(record["context"]),   # (seq_len, 32)
+            "timings": torch.as_tensor(record["timings"]),   # (seq_len, 3)
+            "context": torch.as_tensor(record["context"]),   # (seq_len, 32)
         }
