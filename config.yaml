@@ -24,9 +24,9 @@ nonlinear:
   backvisit_probability: 0.15
 
 gan:
-  noise_dim: 64
+  noise_dim: 16      # 64 → 16: context 상대 영향력 33% → 67%
   context_dim: 32
-  hidden_size: 128
+  hidden_size: 256   # 128 → 256: 모델 용량 증가
   num_layers: 3
   seq_len: 32
 
