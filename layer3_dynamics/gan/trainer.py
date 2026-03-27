@@ -82,15 +82,29 @@ class GANTrainer:
             hidden_size=config.get("hidden_size", 256),
         ).to(self.device)
 
-        self.opt_G = optim.Adam(self.G.parameters(), lr=1e-4, betas=(0.0, 0.9))
+        self.opt_G = optim.Adam(self.G.parameters(), lr=2e-4, betas=(0.0, 0.9))
         self.opt_D = optim.Adam(self.D.parameters(), lr=1e-4, betas=(0.0, 0.9))
         self._use_amp = (self.device.type == "cuda")
         self._scaler = torch.amp.GradScaler("cuda") if self._use_amp else None
 
+    def load_checkpoint(self, g_path: str, d_path: str):
+        """저장된 체크포인트에서 G, D 가중치 로드."""
+        from pathlib import Path
+        if Path(g_path).exists() and Path(d_path).exists():
+            self.G.load_state_dict(torch.load(g_path, map_location=self.device))
+            self.D.load_state_dict(torch.load(d_path, map_location=self.device))
+            logger.info(f"Resumed from checkpoint: {g_path}, {d_path}")
+        else:
+            logger.warning(f"Checkpoint not found, starting from scratch.")
+
     def train(self, dataset_path: str, epochs: int = 1000, batch_size: int = 64,
-              eval_every: int = 50, target_ks: float = 0.10, patience: int = 5,
+              eval_every: int = 10, target_ks: float = 0.10, patience: int = 15,
               best_g_path: str = "models/gan_generator_best.pth",
-              best_d_path: str = "models/gan_discriminator_best.pth"):
+              best_d_path: str = "models/gan_discriminator_best.pth",
+              resume: bool = False):
+
+        if resume:
+            self.load_checkpoint(best_g_path, best_d_path)
 
         # ── 90/10 Train/Val 분리 (완전히 겹치지 않음) ──
         full_dataset = KeystrokeDataset(dataset_path, seq_len=self.seq_len)
